@@ -274,7 +274,7 @@ def number_to_cantonese_str(num: int) -> str:
 def get_cantonese_time_string(now: datetime.datetime) -> str:
     """
     Formats current time into exact specified format:
-    e.g., 而家係香港時間深夜12點四十九
+    e.g., 而家係香港時間深夜12點四十九分
     """
     hour = now.hour
     minute = now.minute
@@ -301,7 +301,7 @@ def get_cantonese_time_string(now: datetime.datetime) -> str:
     else:
         minute_str = number_to_cantonese_str(minute)
 
-    return f"而家係香港時間{period}{display_hour}點{minute_str}"
+    return f"而家係香港時間{period}{display_hour}點{minute_str}分"
 
 
 def get_hk_time_and_weather() -> tuple[datetime.datetime, str]:
