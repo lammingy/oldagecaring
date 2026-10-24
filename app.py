@@ -237,7 +237,7 @@ def inject_accessible_css() -> None:
 
 
 # ==============================================================================
-# 3. CANTONESE INTENT & API-BASED HONG KONG TIME / WEATHER ENGINE
+# 3. CANTONESE INTENT & LIVE HONG KONG TIME / WEATHER ENGINE
 # ==============================================================================
 WEEKDAY_CANTONESE = {
     0: "星期一",
@@ -258,7 +258,7 @@ HK_TZ = datetime.timezone(datetime.timedelta(hours=8))
 
 
 def number_to_cantonese_str(num: int) -> str:
-    """Converts a number (0-59) into Chinese Cantonese text (e.g., 47 -> 四十七, 5 -> 五)."""
+    """Converts a number (0-59) into Chinese Cantonese text (e.g., 49 -> 四十九)."""
     if num in NUM_TO_CANTONESE:
         return NUM_TO_CANTONESE[num]
     if num < 20:
@@ -274,7 +274,7 @@ def number_to_cantonese_str(num: int) -> str:
 def get_cantonese_time_string(now: datetime.datetime) -> str:
     """
     Formats current time into exact specified format:
-    e.g., 而家係香港時間深夜12點四十七
+    e.g., 而家係香港時間深夜12點四十九
     """
     hour = now.hour
     minute = now.minute
@@ -306,10 +306,11 @@ def get_cantonese_time_string(now: datetime.datetime) -> str:
 
 def get_hk_time_and_weather() -> tuple[datetime.datetime, str]:
     """
-     Fetches precise Hong Kong time and live weather simultaneously from Open-Meteo API 
-     with 'Asia/Hong_Kong' timezone.
+     獲取精確嘅即時香港時間（直接使用系統即時時鐘確保準確），
+     並同時從 Open-Meteo API 獲取即時天氣。
     """
-    fallback_now = datetime.datetime.now(datetime.timezone.utc).astimezone(HK_TZ)
+    # 直接使用當刻即時嘅香港時間，確保分秒 100% 準確
+    now = datetime.datetime.now(HK_TZ)
     fallback_weather = "今日香港天氣大致天晴，氣溫適中。出門散步記得帶把遮傍身啦！"
 
     try:
@@ -319,15 +320,7 @@ def get_hk_time_and_weather() -> tuple[datetime.datetime, str]:
         with urllib.request.urlopen(req, timeout=3) as response:
             data = json.loads(response.read().decode())
             
-            # Extract accurate Hong Kong datetime from API
-            current_time_str = data.get("current", {}).get("time")
-            if current_time_str:
-                api_time = datetime.datetime.fromisoformat(current_time_str)
-                now = api_time.replace(tzinfo=HK_TZ)
-            else:
-                now = fallback_now
-
-            # Extract weather info
+            # 提取天氣資訊
             temp = data.get("current", {}).get("temperature_2m")
             code = data.get("current", {}).get("weather_code", 0)
             
@@ -346,7 +339,7 @@ def get_hk_time_and_weather() -> tuple[datetime.datetime, str]:
             
             return now, weather_sentence
     except Exception:
-        return fallback_now, fallback_weather
+        return now, fallback_weather
 
 
 def generate_cantonese_response(user_text: str) -> str:
