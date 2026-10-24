@@ -301,7 +301,7 @@ def get_cantonese_time_string(now: datetime.datetime) -> str:
     else:
         minute_str = number_to_cantonese_str(minute)
 
-    return f"而家係香港時間{period}{display_hour}點{minute_str}分"
+    return f"而家係香港時間{period}{display_hour}點{minute_str}分git add app.py"
 
 
 def get_hk_time_and_weather() -> tuple[datetime.datetime, str]:
@@ -381,8 +381,8 @@ def generate_cantonese_response(user_text: str) -> str:
     # 5. Emergency / Family Contact Intent (求助 / 屋企人 / 打電話)
     if any(k in cleaned for k in ["救命", "唔舒服", "頭暈", "痛", "打電話", "阿仔", "阿女", "屋企人", "幫手"]):
         return (
-            "收到！如果你覺得唔舒服，請即刻坐低休息。緊急聯絡人係阿仔（陳大文），"
-            "電話係 9 1 2 3 4 5 6 7。如果情況緊急，請即刻打 9 9 9 求助！"
+            "收到！如果你覺得唔舒服，請即刻坐低休息。緊急聯絡人係阿仔 JJ，"
+            "電話係 5 2 8 1 0 2 8 5。如果情況緊急，請即刻打 9 9 9 求助！"
         )
 
     # 6. Greeting / Health Tip / Chat Intent (問候 / 傾偈 / 養生)
