@@ -237,7 +237,7 @@ def inject_accessible_css() -> None:
 
 
 # ==============================================================================
-# 3. CANTONESE INTENT & API-BASED BEIJING TIME / WEATHER ENGINE
+# 3. CANTONESE INTENT & API-BASED HONG KONG TIME / WEATHER ENGINE
 # ==============================================================================
 WEEKDAY_CANTONESE = {
     0: "星期一",
@@ -249,7 +249,7 @@ WEEKDAY_CANTONESE = {
     6: "星期日",
 }
 
-BEIJING_TZ = datetime.timezone(datetime.timedelta(hours=8))
+HK_TZ = datetime.timezone(datetime.timedelta(hours=8))
 
 
 def get_cantonese_time_string(now: datetime.datetime) -> str:
@@ -283,28 +283,29 @@ def get_cantonese_time_string(now: datetime.datetime) -> str:
     else:
         minute_str = f"{minute}分"
 
-    return f"而家係北京時間{period}{display_hour}點{minute_str}。"
+    return f"而家係香港時間{period}{display_hour}點{minute_str}。"
 
 
-def get_beijing_time_and_weather() -> tuple[datetime.datetime, str]:
+def get_hk_time_and_weather() -> tuple[datetime.datetime, str]:
     """
-     Fetches precise Beijing time and live weather simultaneously from Open-Meteo API 
-     with 'Asia/Shanghai' timezone, completely bypassing server clock mismatches.
+     Fetches precise Hong Kong time and live weather simultaneously from Open-Meteo API 
+     with 'Asia/Hong_Kong' timezone.
     """
-    fallback_now = datetime.datetime.now(datetime.timezone.utc).astimezone(BEIJING_TZ)
-    fallback_weather = "今日北京天氣大致晴朗，氣溫適中。出門記得留意天氣變化啦！"
+    fallback_now = datetime.datetime.now(datetime.timezone.utc).astimezone(HK_TZ)
+    fallback_weather = "今日香港天氣大致天晴，氣溫適中。出門散步記得帶把遮傍身啦！"
 
     try:
-        url = "https://api.open-meteo.com/v1/forecast?latitude=39.9042&longitude=116.4074&current=temperature_2m,weather_code&timezone=Asia/Shanghai"
+        # Hong Kong coordinates: Lat 22.3193, Lon 114.1694
+        url = "https://api.open-meteo.com/v1/forecast?latitude=22.3193&longitude=114.1694&current=temperature_2m,weather_code&timezone=Asia/Hong_Kong"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=3) as response:
             data = json.loads(response.read().decode())
             
-            # Extract accurate Beijing datetime from API
+            # Extract accurate Hong Kong datetime from API
             current_time_str = data.get("current", {}).get("time")
             if current_time_str:
                 api_time = datetime.datetime.fromisoformat(current_time_str)
-                now = api_time.replace(tzinfo=BEIJING_TZ)
+                now = api_time.replace(tzinfo=HK_TZ)
             else:
                 now = fallback_now
 
@@ -323,7 +324,7 @@ def get_beijing_time_and_weather() -> tuple[datetime.datetime, str]:
                 weather_desc = "落雪"
 
             temp_str = f"大約 {int(temp)} 度" if temp is not None else "氣溫適中"
-            weather_sentence = f"今日北京天氣大致{weather_desc}，氣溫{temp_str}。出門記得留意天氣變化，注意保暖或防曬呀！"
+            weather_sentence = f"今日香港天氣大致{weather_desc}，氣溫{temp_str}。出門散步記得着返件薄外套，最好帶埋把遮傍身啦！"
             
             return now, weather_sentence
     except Exception:
@@ -339,8 +340,8 @@ def generate_cantonese_response(user_text: str) -> str:
     if not cleaned:
         return "我頭先聽唔清楚，請你再講多次，或者撳下面嘅大掣啦。"
 
-    # Fetch live synchronized Beijing time and weather
-    now, weather_sentence = get_beijing_time_and_weather()
+    # Fetch live synchronized Hong Kong time and weather
+    now, weather_sentence = get_hk_time_and_weather()
     weekday_str = WEEKDAY_CANTONESE[now.weekday()]
 
     # 1. Time Intent (報時)
@@ -351,7 +352,7 @@ def generate_cantonese_response(user_text: str) -> str:
     # 2. Date / Day of Week Intent (日期 / 星期)
     if any(k in cleaned for k in ["幾號", "日期", "星期幾", "今日係", "邊日", "日曆"]):
         return (
-            f"今日係北京時間 {now.year}年 {now.month}月 {now.day}號，{weekday_str}。"
+            f"今日係香港時間 {now.year}年 {now.month}月 {now.day}號，{weekday_str}。"
             "祝你今日心境開朗，身體健康！"
         )
 
@@ -363,21 +364,21 @@ def generate_cantonese_response(user_text: str) -> str:
     if any(k in cleaned for k in ["食藥", "血壓", "覆診", "提醒", "備忘", "食咗藥未", "藥"]):
         return (
             "溫馨提醒你：朝早八點半要食血壓藥（一粒白色圓形藥丸），食完早餐先好食呀！"
-            "另外，下星期三朝早十點半要返醫院覆診。"
+            "另外，下星期三朝早十點半要返眼科診所覆診。"
         )
 
     # 5. Emergency / Family Contact Intent (求助 / 屋企人 / 打電話)
     if any(k in cleaned for k in ["救命", "唔舒服", "頭暈", "痛", "打電話", "阿仔", "阿女", "屋企人", "幫手"]):
         return (
             "收到！如果你覺得唔舒服，請即刻坐低休息。緊急聯絡人係阿仔（陳大文），"
-            "電話係 1 3 8 0 0 1 3 8 0 0。如果情況緊急，請即刻打 1 2 0 求助！"
+            "電話係 9 1 2 3 4 5 6 7。如果情況緊急，請即刻打 9 9 9 求助！"
         )
 
     # 6. Greeting / Health Tip / Chat Intent (問候 / 傾偈 / 養生)
     if any(k in cleaned for k in ["你好", "早晨", "早唞", "健康", "飲湯", "養生", "悶", "傾偈"]):
         return (
             "老友記你好呀！今日精神好嗎？護眼小貼士提提你：平時唔好喺太暗嘅地方睇嘢，"
-            "每隔半個鐘就合埋對眼休息五分鐘，得閒聼下收音機就最舒服喇！"
+            "每隔半個鐘就合埋對眼休息五分鐘，得閒聽下粵曲或者收音機就最舒服喇！"
         )
 
     # 7. Optional Gemini AI Fallback (if GEMINI_API_KEY is configured in environment)
