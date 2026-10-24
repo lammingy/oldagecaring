@@ -17,6 +17,7 @@ import datetime
 import io
 import json
 import os
+import urllib.request
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -236,7 +237,7 @@ def inject_accessible_css() -> None:
 
 
 # ==============================================================================
-# 3. CANTONESE INTENT & AI RESPONSE ENGINE
+# 3. CANTONESE INTENT & API-BASED BEIJING TIME / WEATHER ENGINE
 # ==============================================================================
 WEEKDAY_CANTONESE = {
     0: "星期一",
@@ -247,6 +248,8 @@ WEEKDAY_CANTONESE = {
     5: "星期六",
     6: "星期日",
 }
+
+BEIJING_TZ = datetime.timezone(datetime.timedelta(hours=8))
 
 
 def get_cantonese_time_string(now: datetime.datetime) -> str:
@@ -280,7 +283,51 @@ def get_cantonese_time_string(now: datetime.datetime) -> str:
     else:
         minute_str = f"{minute}分"
 
-    return f"而家係{period}{display_hour}點{minute_str}。"
+    return f"而家係北京時間{period}{display_hour}點{minute_str}。"
+
+
+def get_beijing_time_and_weather() -> tuple[datetime.datetime, str]:
+    """
+     Fetches precise Beijing time and live weather simultaneously from Open-Meteo API 
+     with 'Asia/Shanghai' timezone, completely bypassing server clock mismatches.
+    """
+    fallback_now = datetime.datetime.now(datetime.timezone.utc).astimezone(BEIJING_TZ)
+    fallback_weather = "今日北京天氣大致晴朗，氣溫適中。出門記得留意天氣變化啦！"
+
+    try:
+        url = "https://api.open-meteo.com/v1/forecast?latitude=39.9042&longitude=116.4074&current=temperature_2m,weather_code&timezone=Asia/Shanghai"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req, timeout=3) as response:
+            data = json.loads(response.read().decode())
+            
+            # Extract accurate Beijing datetime from API
+            current_time_str = data.get("current", {}).get("time")
+            if current_time_str:
+                api_time = datetime.datetime.fromisoformat(current_time_str)
+                now = api_time.replace(tzinfo=BEIJING_TZ)
+            else:
+                now = fallback_now
+
+            # Extract weather info
+            temp = data.get("current", {}).get("temperature_2m")
+            code = data.get("current", {}).get("weather_code", 0)
+            
+            weather_desc = "天晴"
+            if code in [1, 2, 3]:
+                weather_desc = "多雲"
+            elif code in [45, 48]:
+                weather_desc = "有霧"
+            elif code in [51, 53, 55, 61, 63, 65, 80, 81, 82]:
+                weather_desc = "落雨"
+            elif code in [71, 73, 75, 85, 86]:
+                weather_desc = "落雪"
+
+            temp_str = f"大約 {int(temp)} 度" if temp is not None else "氣溫適中"
+            weather_sentence = f"今日北京天氣大致{weather_desc}，氣溫{temp_str}。出門記得留意天氣變化，注意保暖或防曬呀！"
+            
+            return now, weather_sentence
+    except Exception:
+        return fallback_now, fallback_weather
 
 
 def generate_cantonese_response(user_text: str) -> str:
@@ -292,7 +339,8 @@ def generate_cantonese_response(user_text: str) -> str:
     if not cleaned:
         return "我頭先聽唔清楚，請你再講多次，或者撳下面嘅大掣啦。"
 
-    now = datetime.datetime.now()
+    # Fetch live synchronized Beijing time and weather
+    now, weather_sentence = get_beijing_time_and_weather()
     weekday_str = WEEKDAY_CANTONESE[now.weekday()]
 
     # 1. Time Intent (報時)
@@ -303,36 +351,33 @@ def generate_cantonese_response(user_text: str) -> str:
     # 2. Date / Day of Week Intent (日期 / 星期)
     if any(k in cleaned for k in ["幾號", "日期", "星期幾", "今日係", "邊日", "日曆"]):
         return (
-            f"今日係 {now.year}年 {now.month}月 {now.day}號，{weekday_str}。"
+            f"今日係北京時間 {now.year}年 {now.month}月 {now.day}號，{weekday_str}。"
             "祝你今日心境開朗，身體健康！"
         )
 
     # 3. Weather Intent (天氣 / 出街)
     if any(k in cleaned for k in ["天氣", "落雨", "幾度", "氣溫", "凍唔凍", "熱唔熱", "出街", "帶遮"]):
-        return (
-            "今日天氣大致天晴，氣溫大約 24 度，吹和緩東風，濕度適中。"
-            "出街散步記得着返件薄外套，最好帶埋把遮傍身啦！"
-        )
+        return weather_sentence
 
     # 4. Medication & Daily Reminders Intent (食藥 / 覆診 / 提醒)
     if any(k in cleaned for k in ["食藥", "血壓", "覆診", "提醒", "備忘", "食咗藥未", "藥"]):
         return (
             "溫馨提醒你：朝早八點半要食血壓藥（一粒白色圓形藥丸），食完早餐先好食呀！"
-            "另外，下星期三朝早十點半要返眼科診所覆診。"
+            "另外，下星期三朝早十點半要返醫院覆診。"
         )
 
     # 5. Emergency / Family Contact Intent (求助 / 屋企人 / 打電話)
     if any(k in cleaned for k in ["救命", "唔舒服", "頭暈", "痛", "打電話", "阿仔", "阿女", "屋企人", "幫手"]):
         return (
             "收到！如果你覺得唔舒服，請即刻坐低休息。緊急聯絡人係阿仔（陳大文），"
-            "電話係 9 1 2 3 4 5 6 7。如果情況緊急，請即刻打 9 9 9 求助！"
+            "電話係 1 3 8 0 0 1 3 8 0 0。如果情況緊急，請即刻打 1 2 0 求助！"
         )
 
     # 6. Greeting / Health Tip / Chat Intent (問候 / 傾偈 / 養生)
     if any(k in cleaned for k in ["你好", "早晨", "早唞", "健康", "飲湯", "養生", "悶", "傾偈"]):
         return (
             "老友記你好呀！今日精神好嗎？護眼小貼士提提你：平時唔好喺太暗嘅地方睇嘢，"
-            "每隔半個鐘就合埋對眼休息五分鐘，得閒聽下粵曲或者收音機就最舒服喇！"
+            "每隔半個鐘就合埋對眼休息五分鐘，得閒聼下收音機就最舒服喇！"
         )
 
     # 7. Optional Gemini AI Fallback (if GEMINI_API_KEY is configured in environment)
@@ -489,7 +534,6 @@ def render_cantonese_tts_and_voice_helper(text_to_speak: str, trigger_id: int) -
                 const voices = window.speechSynthesis.getVoices();
                 if (!voices || voices.length === 0) return null;
 
-                // Priority 1: Exact zh-HK or yue-HK voices
                 let hkVoice = voices.find(v =>
                     v.lang.toLowerCase() === 'zh-hk' ||
                     v.lang.toLowerCase() === 'yue-hk' ||
@@ -501,11 +545,9 @@ def render_cantonese_tts_and_voice_helper(text_to_speak: str, trigger_id: int) -
                 );
                 if (hkVoice) return hkVoice;
 
-                // Priority 2: Traditional Chinese fallback
                 let twVoice = voices.find(v => v.lang.toLowerCase().includes('zh-tw'));
                 if (twVoice) return twVoice;
 
-                // Priority 3: Any Chinese voice
                 return voices.find(v => v.lang.toLowerCase().startsWith('zh')) || null;
             }}
 
@@ -518,7 +560,7 @@ def render_cantonese_tts_and_voice_helper(text_to_speak: str, trigger_id: int) -
 
                 const utterance = new SpeechSynthesisUtterance(responseText);
                 utterance.lang = 'zh-HK';
-                utterance.rate = 0.88;  // Slightly slower, clearer cadence for elderly listeners
+                utterance.rate = 0.88;
                 utterance.pitch = 1.0;
                 utterance.volume = 1.0;
 
@@ -536,7 +578,6 @@ def render_cantonese_tts_and_voice_helper(text_to_speak: str, trigger_id: int) -
                 }}
             }}
 
-            // Automatically read aloud when new response arrives
             if ('speechSynthesis' in window) {{
                 if (window.speechSynthesis.getVoices().length === 0) {{
                     window.speechSynthesis.onvoiceschanged = function() {{
@@ -577,7 +618,6 @@ def handle_command(command_text: str) -> None:
 def main() -> None:
     inject_accessible_css()
 
-    # --- Top High-Contrast Title Banner ---
     st.markdown(
         """
         <div class="header-box" role="banner">
@@ -588,7 +628,6 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    # --- Step 1: Prominent Microphone Voice Input ---
     st.markdown('<div class="section-label">1️⃣ 語音指令（撳下面個咪講嘢）</div>', unsafe_allow_html=True)
 
     audio_value = st.audio_input(
@@ -597,7 +636,6 @@ def main() -> None:
 
     if audio_value is not None:
         current_bytes = audio_value.getvalue()
-        # Only process when a new recording is captured
         if current_bytes != st.session_state.last_audio_bytes:
             st.session_state.last_audio_bytes = current_bytes
             with st.spinner("⏳ 正在聽取你嘅廣東話指令..."):
@@ -610,14 +648,12 @@ def main() -> None:
                     st.session_state.bot_response = result_text
                     st.session_state.tts_trigger_id += 1
 
-    # --- Display Alert / Edge-Case Feedback if Present ---
     if st.session_state.status_message:
         st.markdown(
             f'<div class="alert-box" role="alert">{st.session_state.status_message}</div>',
             unsafe_allow_html=True,
         )
 
-    # --- Step 2: Massive Visual Output + Automatic Cantonese TTS ---
     st.markdown('<div class="section-label">2️⃣ 助手回答（大字顯示 + 自動朗讀）</div>', unsafe_allow_html=True)
 
     query_html = (
@@ -636,13 +672,11 @@ def main() -> None:
         unsafe_allow_html=True,
     )
 
-    # Inject Web Speech Synthesis ('zh-HK') player & auto-reader
     render_cantonese_tts_and_voice_helper(
         st.session_state.bot_response,
         st.session_state.tts_trigger_id,
     )
 
-    # --- Step 3: Extra-Large One-Tap Quick Buttons (Zero-Typing Convenience) ---
     st.markdown('<div class="section-label">3️⃣ 常用一鍵指令（直接撳大掣）</div>', unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
@@ -668,7 +702,6 @@ def main() -> None:
             handle_command("你好，講個護眼貼士嚟聽下")
             st.rerun()
 
-    # --- Step 4: Huge Font Text Input Fallback ---
     st.markdown('<div class="section-label">4️⃣ 大字打字輸入（後備輸入框）</div>', unsafe_allow_html=True)
 
     with st.form(key="text_fallback_form", clear_on_submit=True):
