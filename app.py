@@ -249,11 +249,33 @@ WEEKDAY_CANTONESE = {
     6: "星期日",
 }
 
+NUM_TO_CANTONESE = {
+    0: "零", 1: "一", 2: "二", 3: "三", 4: "四", 5: "五",
+    6: "六", 7: "七", 8: "八", 9: "九", 10: "十"
+}
+
 HK_TZ = datetime.timezone(datetime.timedelta(hours=8))
 
 
+def number_to_cantonese_str(num: int) -> str:
+    """Converts a number (0-59) into Chinese Cantonese text (e.g., 47 -> 四十七, 5 -> 五)."""
+    if num in NUM_TO_CANTONESE:
+        return NUM_TO_CANTONESE[num]
+    if num < 20:
+        return f"十{NUM_TO_CANTONESE[num % 10]}"
+    
+    tens = num // 10
+    units = num % 10
+    tens_str = f"{NUM_TO_CANTONESE[tens]}十"
+    units_str = NUM_TO_CANTONESE[units] if units > 0 else ""
+    return f"{tens_str}{units_str}"
+
+
 def get_cantonese_time_string(now: datetime.datetime) -> str:
-    """Formats current time into natural spoken Cantonese."""
+    """
+    Formats current time into exact specified format:
+    e.g., 而家係香港時間深夜12點四十七
+    """
     hour = now.hour
     minute = now.minute
 
@@ -276,14 +298,10 @@ def get_cantonese_time_string(now: datetime.datetime) -> str:
         minute_str = "正"
     elif minute == 30:
         minute_str = "半"
-    elif minute == 15:
-        minute_str = "三個骨"
-    elif minute == 45:
-        minute_str = "九個骨"
     else:
-        minute_str = f"{minute}分"
+        minute_str = number_to_cantonese_str(minute)
 
-    return f"而家係香港時間{period}{display_hour}點{minute_str}。"
+    return f"而家係香港時間{period}{display_hour}點{minute_str}"
 
 
 def get_hk_time_and_weather() -> tuple[datetime.datetime, str]:
@@ -347,7 +365,7 @@ def generate_cantonese_response(user_text: str) -> str:
     # 1. Time Intent (報時)
     if any(k in cleaned for k in ["幾點", "時間", "報時", "鐘數", "而家幾點"]):
         time_sentence = get_cantonese_time_string(now)
-        return f"{time_sentence} 記得多飲溫水，坐低休息下呀！"
+        return f"{time_sentence}。記得多飲溫水，坐低休息下呀！"
 
     # 2. Date / Day of Week Intent (日期 / 星期)
     if any(k in cleaned for k in ["幾號", "日期", "星期幾", "今日係", "邊日", "日曆"]):
