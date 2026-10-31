@@ -6,11 +6,11 @@ Tailored for elderly users with low vision:
 - High-contrast dark theme (#000000 background, #FFD700 / #FFFFFF text)
 - Massive typography and prominent microphone/quick-action controls
 - Cantonese Speech-to-Text (via st.audio_input + SpeechRecognition) + Text Fallback
-- Cantonese Intent Engine (Time, Date, Weather, Reminders, Emergency, AI Chat)
+- Cantonese Intent Engine (Time, Date, Weather, Reminders, Emergency, Local DeepSeek AI Chat)
 - Dual Output: Giant visual response card + automatic browser Web Speech API ('zh-HK') TTS
 
 Required Pip Packages:
-    pip install streamlit SpeechRecognition google-genai
+    pip install streamlit SpeechRecognition google-genai ollama
 """
 
 import datetime
@@ -20,6 +20,7 @@ import os
 import urllib.request
 import streamlit as st
 import streamlit.components.v1 as components
+import ollama  # 本地 Ollama 整合套件
 
 # Optional SpeechRecognition import for decoding recorded audio into Cantonese text
 try:
@@ -28,7 +29,7 @@ try:
 except ImportError:
     SR_AVAILABLE = False
 
-# Optional Gemini SDK import for open-ended Cantonese questions
+# Optional Gemini SDK import for open-ended Cantonese questions (as cloud fallback)
 try:
     from google import genai
     GENAI_AVAILABLE = True
@@ -309,7 +310,6 @@ def get_hk_time_and_weather() -> tuple[datetime.datetime, str]:
      獲取精確嘅即時香港時間（直接使用系統即時時鐘確保準確），
      並同時從 Open-Meteo API 獲取即時天氣。
     """
-    # 直接使用當刻即時嘅香港時間，確保分秒 100% 準確
     now = datetime.datetime.now(HK_TZ)
     fallback_weather = "今日香港天氣大致天晴，氣溫適中。出門散步記得帶把遮傍身啦！"
 
@@ -320,7 +320,6 @@ def get_hk_time_and_weather() -> tuple[datetime.datetime, str]:
         with urllib.request.urlopen(req, timeout=3) as response:
             data = json.loads(response.read().decode())
             
-            # 提取天氣資訊
             temp = data.get("current", {}).get("temperature_2m")
             code = data.get("current", {}).get("weather_code", 0)
             
@@ -392,7 +391,36 @@ def generate_cantonese_response(user_text: str) -> str:
             "每隔半個鐘就合埋對眼休息五分鐘，得閒聽下粵曲或者收音機就最舒服喇！"
         )
 
-    # 7. Optional Gemini AI Fallback (if GEMINI_API_KEY is configured in environment)
+    # 7. Local Ollama (DeepSeek-R1) AI Engine Integration
+    try:
+        response = ollama.chat(
+            model='deepseek-r1:8b',
+            messages=[
+                {
+                    'role': 'system',
+                    'content': (
+                        '你係一個專門協助香港長者（或低視能人士）嘅貼心粵語生活助手。'
+                        '請用極度親切、溫暖、口語化嘅繁體中文（廣東話）回答。'
+                        '因為長者會透過語音聆聽答案，字數必須精簡（控制喺 50 字以內），'
+                        '避免複雜嘅標點符號或專有名詞，語氣要好似屋企人一樣關心對方。'
+                    )
+                },
+                {
+                    'role': 'user',
+                    'content': cleaned
+                }
+            ]
+        )
+        ai_answer = response.get('message', {}).get('content', '').strip()
+        if ai_answer:
+            # 移除 DeepSeek-R1 可能輸出的思考過程標籤
+            if "</think>" in ai_answer:
+                ai_answer = ai_answer.split("</think>")[-1].strip()
+            return ai_answer
+    except Exception:
+        pass
+
+    # 8. Optional Gemini AI Cloud Fallback (if GEMINI_API_KEY is configured in environment)
     api_key = os.environ.get("GEMINI_API_KEY")
     if GENAI_AVAILABLE and api_key:
         try:
@@ -412,7 +440,7 @@ def generate_cantonese_response(user_text: str) -> str:
         except Exception:
             pass
 
-    # 8. Graceful Offline Fallback for Unrecognized Queries
+    # 9. Graceful Offline Fallback for Unrecognized Queries
     return (
         f"我聽到你講：「{cleaned}」。"
         "我而家可以幫你報時、查今日日期、報天氣、提醒食藥同埋搵屋企人電話。"
