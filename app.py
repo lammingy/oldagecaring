@@ -6,7 +6,7 @@ Tailored for elderly users with low vision:
 - High-contrast dark theme (#000000 background, #FFD700 / #FFFFFF text)
 - Massive typography and prominent microphone/quick-action controls
 - Cantonese Speech-to-Text (via st.audio_input + SpeechRecognition) + Text Fallback
-- Cantonese Intent Engine (Time, Date, Weather, Reminders, Emergency, Local DeepSeek AI Chat)
+- AI-First Cantonese Engine (Local DeepSeek-R1 via Ollama + Real-time Context Injection)
 - Dual Output: Giant visual response card + automatic browser Web Speech API ('zh-HK') TTS
 
 Required Pip Packages:
@@ -29,7 +29,7 @@ try:
 except ImportError:
     SR_AVAILABLE = False
 
-# Optional Gemini SDK import for open-ended Cantonese questions (as cloud fallback)
+# Optional Gemini SDK import for cloud fallback
 try:
     from google import genai
     GENAI_AVAILABLE = True
@@ -51,7 +51,7 @@ if "user_query" not in st.session_state:
     st.session_state.user_query = ""
 if "bot_response" not in st.session_state:
     st.session_state.bot_response = (
-        "老友記你好！請撳下面嘅大掣或者對住咪高峰講嘢，我可以報時、報天氣同埋提你食藥。"
+        "老友記你好！我係你嘅AI生活伴侶，隨時陪你傾偈、講笑話、報天氣同聽你分享心事！"
     )
 if "status_message" not in st.session_state:
     st.session_state.status_message = ""
@@ -78,7 +78,6 @@ def inject_accessible_css() -> None:
             font-family: "Noto Sans TC", "PingFang HK", "Microsoft JhengHei", sans-serif !important;
         }
 
-        /* Hide Streamlit default chrome to reduce cognitive load */
         #MainMenu, footer, [data-testid="stToolbar"] {
             visibility: hidden !important;
         }
@@ -238,16 +237,11 @@ def inject_accessible_css() -> None:
 
 
 # ==============================================================================
-# 3. CANTONESE INTENT & LIVE HONG KONG TIME / WEATHER ENGINE
+# 3. CANTONESE TIME & WEATHER UTILITIES
 # ==============================================================================
 WEEKDAY_CANTONESE = {
-    0: "星期一",
-    1: "星期二",
-    2: "星期三",
-    3: "星期四",
-    4: "星期五",
-    5: "星期六",
-    6: "星期日",
+    0: "星期一", 1: "星期二", 2: "星期三", 3: "星期四",
+    4: "星期五", 5: "星期六", 6: "星期日",
 }
 
 NUM_TO_CANTONESE = {
@@ -259,24 +253,16 @@ HK_TZ = datetime.timezone(datetime.timedelta(hours=8))
 
 
 def number_to_cantonese_str(num: int) -> str:
-    """Converts a number (0-59) into Chinese Cantonese text (e.g., 49 -> 四十九)."""
     if num in NUM_TO_CANTONESE:
         return NUM_TO_CANTONESE[num]
     if num < 20:
         return f"十{NUM_TO_CANTONESE[num % 10]}"
-    
     tens = num // 10
     units = num % 10
-    tens_str = f"{NUM_TO_CANTONESE[tens]}十"
-    units_str = NUM_TO_CANTONESE[units] if units > 0 else ""
-    return f"{tens_str}{units_str}"
+    return f"{NUM_TO_CANTONESE[tens]}十{NUM_TO_CANTONESE[units] if units > 0 else ''}"
 
 
 def get_cantonese_time_string(now: datetime.datetime) -> str:
-    """
-    Formats current time into exact specified format:
-    e.g., 而家係香港時間深夜12點四十九分
-    """
     hour = now.hour
     minute = now.minute
 
@@ -306,20 +292,14 @@ def get_cantonese_time_string(now: datetime.datetime) -> str:
 
 
 def get_hk_time_and_weather() -> tuple[datetime.datetime, str]:
-    """
-     獲取精確嘅即時香港時間（直接使用系統即時時鐘確保準確），
-     並同時從 Open-Meteo API 獲取即時天氣。
-    """
     now = datetime.datetime.now(HK_TZ)
-    fallback_weather = "今日香港天氣大致天晴，氣溫適中。出門散步記得帶把遮傍身啦！"
+    fallback_weather = "今日香港天氣大致天晴，氣溫適中。"
 
     try:
-        # Hong Kong coordinates: Lat 22.3193, Lon 114.1694
         url = "https://api.open-meteo.com/v1/forecast?latitude=22.3193&longitude=114.1694&current=temperature_2m,weather_code&timezone=Asia/Hong_Kong"
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=3) as response:
             data = json.loads(response.read().decode())
-            
             temp = data.get("current", {}).get("temperature_2m")
             code = data.get("current", {}).get("weather_code", 0)
             
@@ -334,64 +314,36 @@ def get_hk_time_and_weather() -> tuple[datetime.datetime, str]:
                 weather_desc = "落雪"
 
             temp_str = f"大約 {int(temp)} 度" if temp is not None else "氣溫適中"
-            weather_sentence = f"今日香港天氣大致{weather_desc}，氣溫{temp_str}。出門散步記得着返件薄外套，最好帶埋把遮傍身啦！"
-            
-            return now, weather_sentence
+            return now, f"今日香港天氣大致{weather_desc}，氣溫{temp_str}。"
     except Exception:
         return now, fallback_weather
 
 
+# ==============================================================================
+# 4. AI-FIRST CORE RESPONSE ENGINE (LOCAL DEEPSEEK-R1)
+# ==============================================================================
 def generate_cantonese_response(user_text: str) -> str:
     """
-    Processes the user's Cantonese command and returns a friendly, concise
-    Cantonese answer tailored for elderly daily life.
+    讓 DeepSeek 成為核心大腦：處理所有日常閒聊、開放式問題、生活伴侶對話，
+    同時動態注入即時時間與天氣背景，並保留最高權重的安全緊急覆蓋。
     """
     cleaned = user_text.strip()
     if not cleaned:
-        return "我頭先聽唔清楚，請你再講多次，或者撳下面嘅大掣啦。"
+        return "我頭先聽唔清楚，你想同我傾啲咩呀？"
 
-    # Fetch live synchronized Hong Kong time and weather
-    now, weather_sentence = get_hk_time_and_weather()
-    weekday_str = WEEKDAY_CANTONESE[now.weekday()]
-
-    # 1. Time Intent (報時)
-    if any(k in cleaned for k in ["幾點", "時間", "報時", "鐘數", "而家幾點"]):
-        time_sentence = get_cantonese_time_string(now)
-        return f"{time_sentence}。記得多飲溫水，坐低休息下呀！"
-
-    # 2. Date / Day of Week Intent (日期 / 星期)
-    if any(k in cleaned for k in ["幾號", "日期", "星期幾", "今日係", "邊日", "日曆"]):
-        return (
-            f"今日係香港時間 {now.year}年 {now.month}月 {now.day}號，{weekday_str}。"
-            "祝你今日心境開朗，身體健康！"
-        )
-
-    # 3. Weather Intent (天氣 / 出街)
-    if any(k in cleaned for k in ["天氣", "落雨", "幾度", "氣溫", "凍唔凍", "熱唔熱", "出街", "帶遮"]):
-        return weather_sentence
-
-    # 4. Medication & Daily Reminders Intent (食藥 / 覆診 / 提醒)
-    if any(k in cleaned for k in ["食藥", "血壓", "覆診", "提醒", "備忘", "食咗藥未", "藥"]):
-        return (
-            "溫馨提醒你：朝早八點半要食血壓藥（一粒白色圓形藥丸），食完早餐先好食呀！"
-            "另外，下星期三朝早十點半要返眼科診所覆診。"
-        )
-
-    # 5. Emergency / Family Contact Intent (求助 / 屋企人 / 打電話)
+    # 1. 唯一保留的絕對安全防線（緊急求助、身體不適）
     if any(k in cleaned for k in ["救命", "唔舒服", "頭暈", "痛", "打電話", "阿仔", "阿女", "屋企人", "幫手"]):
         return (
             "收到！如果你覺得唔舒服，請即刻坐低休息。緊急聯絡人係阿仔 JJ，"
             "電話係 5 2 8 1 0 2 8 5。如果情況緊急，請即刻打 9 9 9 求助！"
         )
 
-    # 6. Greeting / Health Tip / Chat Intent (問候 / 傾偈 / 養生)
-    if any(k in cleaned for k in ["你好", "早晨", "早唞", "健康", "飲湯", "養生", "悶", "傾偈"]):
-        return (
-            "老友記你好呀！今日精神好嗎？護眼小貼士提提你：平時唔好喺太暗嘅地方睇嘢，"
-            "每隔半個鐘就合埋對眼休息五分鐘，得閒聽下粵曲或者收音機就最舒服喇！"
-        )
+    # 2. 獲取即時香港時間與天氣，作為動態背景餵給 DeepSeek
+    now, weather_sentence = get_hk_time_and_weather()
+    time_sentence = get_cantonese_time_string(now)
+    weekday_str = WEEKDAY_CANTONESE[now.weekday()]
 
-    # 7. Local Ollama (DeepSeek-R1) AI Engine Integration
+    # 3. 將控制權全面交給本地 DeepSeek 模型，給予極大發揮空間
     try:
         response = ollama.chat(
             model='deepseek-r1:8b',
@@ -399,10 +351,11 @@ def generate_cantonese_response(user_text: str) -> str:
                 {
                     'role': 'system',
                     'content': (
-                        '你係一個專門協助香港長者（或低視能人士）嘅貼心粵語生活助手。'
-                        '請用極度親切、溫暖、口語化嘅繁體中文（廣東話）回答。'
-                        '因為長者會透過語音聆聽答案，字數必須精簡（控制喺 50 字以內），'
-                        '避免複雜嘅標點符號或專有名詞，語氣要好似屋企人一樣關心對方。'
+                        f"你係一個專為香港長者服務嘅貼心、幽默、有智慧嘅粵語生活伴侶兼助手。"
+                        f"當前即時環境：香港時間係 {time_sentence}，{weekday_str}，{weather_sentence}。"
+                        f"請用極度親切、生動、溫暖、地道口語化嘅繁體中文（廣東話）回答。"
+                        f"你可以隨心所欲同長者傾偈、講笑話、分享養生知識、解答生活疑難。"
+                        f"因為會透過語音朗讀，字數請精簡控制喺 60 字以內，語氣要好似老朋友一樣自然。"
                     )
                 },
                 {
@@ -413,89 +366,44 @@ def generate_cantonese_response(user_text: str) -> str:
         )
         ai_answer = response.get('message', {}).get('content', '').strip()
         if ai_answer:
-            # 移除 DeepSeek-R1 可能輸出的思考過程標籤
+            # 清理 DeepSeek-R1 的思考過程標籤
             if "</think>" in ai_answer:
                 ai_answer = ai_answer.split("</think>")[-1].strip()
             return ai_answer
     except Exception:
         pass
 
-    # 8. Optional Gemini AI Cloud Fallback (if GEMINI_API_KEY is configured in environment)
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if GENAI_AVAILABLE and api_key:
-        try:
-            client = genai.Client(api_key=api_key)
-            prompt = (
-                "你係一個專為患有眼疾嘅香港長者服務嘅語音生活助手。"
-                "請用非常親切、簡單、口語化嘅廣東話（繁體中文）回答以下問題，"
-                "字數控制喺 50 字以內，唔好用複雜標點符號，方便語音朗讀：\n"
-                f"長者問：{cleaned}"
-            )
-            ai_resp = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=prompt,
-            )
-            if ai_resp and ai_resp.text:
-                return ai_resp.text.strip()
-        except Exception:
-            pass
-
-    # 9. Graceful Offline Fallback for Unrecognized Queries
-    return (
-        f"我聽到你講：「{cleaned}」。"
-        "我而家可以幫你報時、查今日日期、報天氣、提醒食藥同埋搵屋企人電話。"
-        "你可以試下講：「而家幾點」或者「今日天氣點呀」！"
-    )
+    # 4. 萬一 Ollama 斷線時的離線備用
+    return f"我聽到你講：「{cleaned}」。雖然我依家個腦轉得慢咗少少，但我隨時陪緊你傾偈架！"
 
 
 # ==============================================================================
-# 4. SPEECH-TO-TEXT AUDIO TRANSCRIPTION (CANTONESE 'zh-HK')
+# 5. SPEECH-TO-TEXT AUDIO TRANSCRIPTION (CANTONESE 'zh-HK')
 # ==============================================================================
 def transcribe_cantonese_audio(audio_bytes: bytes) -> tuple[bool, str]:
-    """
-    Transcribes recorded WAV audio bytes into Cantonese text using SpeechRecognition.
-    Returns (success: bool, result_or_error_message: str).
-    """
     if not audio_bytes or len(audio_bytes) < 512:
         return False, "未錄到聲音，請撳實錄音掣講多一次啦。"
 
     if not SR_AVAILABLE:
-        return (
-            False,
-            "系統尚未安裝 SpeechRecognition 語音識別套件，請使用下方大字輸入框或快捷大掣。",
-        )
+        return False, "系統尚未安裝 SpeechRecognition 套件，請使用下方大字輸入框。"
 
     recognizer = sr.Recognizer()
     try:
         with sr.AudioFile(io.BytesIO(audio_bytes)) as source:
             audio_data = recognizer.record(source)
-
-        # Recognize Cantonese (Hong Kong)
         transcript = recognizer.recognize_google(audio_data, language="zh-HK")
         if not transcript or not transcript.strip():
             return False, "聽唔清楚你講乜，請靠近少少咪高峰再講一次啦。"
         return True, transcript.strip()
-
-    except sr.UnknownValueError:
-        return False, "我聽唔清楚你頭先講乜，請慢少少、大聲少少再講一次啦！"
-    except sr.RequestError:
-        return False, "語音識別網絡暫時連唔到，你可以直接撳下面嘅快捷大掣或者打字！"
     except Exception:
-        return False, "處理錄音時出現小問題，請再試一次或者撳下面嘅大掣啦！"
+        return False, "聽唔清楚你頭先講乜，請再講一次或者直接打字啦！"
 
 
 # ==============================================================================
-# 5. FLUENT CANTONESE WEB SPEECH SYNTHESIS (TTS) + BROWSER STT COMPONENT
+# 6. FLUENT CANTONESE WEB SPEECH SYNTHESIS (TTS) COMPONENT
 # ==============================================================================
 def render_cantonese_tts_and_voice_helper(text_to_speak: str, trigger_id: int) -> None:
-    """
-    Injects an accessible HTML/JS component that:
-    1. Automatically speaks `text_to_speak` aloud in fluent Cantonese ('zh-HK')
-       whenever `trigger_id` increments.
-    2. Provides a huge one-tap "🔊 再讀一次 (Replay Audio)" button in the browser.
-    """
     safe_text_json = json.dumps(text_to_speak, ensure_ascii=False)
-
     html_code = f"""
     <!DOCTYPE html>
     <html lang="zh-HK">
@@ -503,131 +411,43 @@ def render_cantonese_tts_and_voice_helper(text_to_speak: str, trigger_id: int) -
         <meta charset="UTF-8">
         <style>
             body {{
-                margin: 0;
-                padding: 0;
-                background-color: #000000;
-                font-family: "Noto Sans TC", "PingFang HK", "Microsoft JhengHei", sans-serif;
-                overflow: hidden;
+                margin: 0; padding: 0; background-color: #000000;
+                font-family: "Noto Sans TC", "PingFang HK", sans-serif; overflow: hidden;
             }}
-            .tts-bar {{
-                display: flex;
-                gap: 16px;
-                width: 100%;
-                box-sizing: border-box;
-                padding: 4px 0;
-            }}
+            .tts-bar {{ display: flex; gap: 16px; width: 100%; box-sizing: border-box; padding: 4px 0; }}
             .tts-btn {{
-                flex: 1;
-                min-height: 92px;
-                background-color: #003319;
-                color: #00FF66;
-                border: 4px solid #00FF66;
-                border-radius: 20px;
-                font-size: 32px;
-                font-weight: 900;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                transition: all 0.15s ease;
+                flex: 1; min-height: 92px; background-color: #003319; color: #00FF66;
+                border: 4px solid #00FF66; border-radius: 20px; font-size: 32px; font-weight: 900;
+                cursor: pointer; display: flex; align-items: center; justify-content: center;
             }}
-            .tts-btn:hover, .tts-btn:focus {{
-                background-color: #00FF66;
-                color: #000000;
-            }}
+            .tts-btn:hover {{ background-color: #00FF66; color: #000000; }}
             .stop-btn {{
-                flex: 0.45;
-                min-height: 92px;
-                background-color: #330000;
-                color: #FF6666;
-                border: 4px solid #FF6666;
-                border-radius: 20px;
-                font-size: 30px;
-                font-weight: 900;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                justify-content: center;
+                flex: 0.45; min-height: 92px; background-color: #330000; color: #FF6666;
+                border: 4px solid #FF6666; border-radius: 20px; font-size: 30px; font-weight: 900;
+                cursor: pointer; display: flex; align-items: center; justify-content: center;
             }}
-            .stop-btn:hover, .stop-btn:focus {{
-                background-color: #FF6666;
-                color: #000000;
-            }}
+            .stop-btn:hover {{ background-color: #FF6666; color: #000000; }}
         </style>
     </head>
     <body>
-        <div class="tts-bar" role="region" aria-label="語音朗讀控制">
-            <button class="tts-btn" onclick="speakCantonese()" aria-label="大聲朗讀答案">
-                🔊 再讀一次答案 (粵語朗讀)
-            </button>
-            <button class="stop-btn" onclick="stopSpeaking()" aria-label="停止朗讀">
-                ⏹️ 停止
-            </button>
+        <div class="tts-bar">
+            <button class="tts-btn" onclick="speakCantonese()">🔊 再讀一次答案</button>
+            <button class="stop-btn" onclick="stopSpeaking()">⏹️ 停止</button>
         </div>
-
         <script>
             const responseText = {safe_text_json};
-            const currentTriggerId = {trigger_id};
-
-            function pickCantoneseVoice() {{
-                if (!('speechSynthesis' in window)) return null;
-                const voices = window.speechSynthesis.getVoices();
-                if (!voices || voices.length === 0) return null;
-
-                let hkVoice = voices.find(v =>
-                    v.lang.toLowerCase() === 'zh-hk' ||
-                    v.lang.toLowerCase() === 'yue-hk' ||
-                    v.lang.toLowerCase().includes('hk') ||
-                    v.name.toLowerCase().includes('cantonese') ||
-                    v.name.includes('粵語') ||
-                    v.name.includes('廣東話') ||
-                    v.name.includes('Hong Kong')
-                );
-                if (hkVoice) return hkVoice;
-
-                let twVoice = voices.find(v => v.lang.toLowerCase().includes('zh-tw'));
-                if (twVoice) return twVoice;
-
-                return voices.find(v => v.lang.toLowerCase().startsWith('zh')) || null;
-            }}
-
             function speakCantonese() {{
-                if (!('speechSynthesis' in window)) {{
-                    alert("你部機嘅瀏覽器暫時唔支援語音朗讀功能。");
-                    return;
-                }}
+                if (!('speechSynthesis' in window)) return;
                 window.speechSynthesis.cancel();
-
                 const utterance = new SpeechSynthesisUtterance(responseText);
                 utterance.lang = 'zh-HK';
                 utterance.rate = 0.88;
-                utterance.pitch = 1.0;
-                utterance.volume = 1.0;
-
-                const selectedVoice = pickCantoneseVoice();
-                if (selectedVoice) {{
-                    utterance.voice = selectedVoice;
-                }}
-
                 window.speechSynthesis.speak(utterance);
             }}
-
             function stopSpeaking() {{
-                if ('speechSynthesis' in window) {{
-                    window.speechSynthesis.cancel();
-                }}
+                if ('speechSynthesis' in window) window.speechSynthesis.cancel();
             }}
-
-            if ('speechSynthesis' in window) {{
-                if (window.speechSynthesis.getVoices().length === 0) {{
-                    window.speechSynthesis.onvoiceschanged = function() {{
-                        speakCantonese();
-                        window.speechSynthesis.onvoiceschanged = null;
-                    }};
-                }} else {{
-                    setTimeout(speakCantonese, 150);
-                }}
-            }}
+            setTimeout(speakCantonese, 150);
         </script>
     </body>
     </html>
@@ -636,13 +456,12 @@ def render_cantonese_tts_and_voice_helper(text_to_speak: str, trigger_id: int) -
 
 
 # ==============================================================================
-# 6. HELPER TO TRIGGER COMMANDS UNIFORMLY
+# 7. HELPER & MAIN UI
 # ==============================================================================
 def handle_command(command_text: str) -> None:
-    """Updates session state with the user query, generates the Cantonese response, and triggers TTS."""
     cleaned = command_text.strip()
     if not cleaned:
-        st.session_state.status_message = "⚠️ 請先講出指令或者輸入文字，唔好留空呀！"
+        st.session_state.status_message = "⚠️ 請先講出指令或者輸入文字！"
         st.session_state.status_type = "warning"
         return
 
@@ -652,33 +471,27 @@ def handle_command(command_text: str) -> None:
     st.session_state.tts_trigger_id += 1
 
 
-# ==============================================================================
-# 7. MAIN APPLICATION UI LAYOUT
-# ==============================================================================
 def main() -> None:
     inject_accessible_css()
 
     st.markdown(
         """
-        <div class="header-box" role="banner">
-            <h1 class="header-title">🎙️ 長者語音生活助手</h1>
-            <div class="header-subtitle">撳一下咪高峰講廣東話，大字顯示兼自動讀出答案</div>
+        <div class="header-box">
+            <h1 class="header-title">🎙️ 長者AI生活伴侶</h1>
+            <div class="header-subtitle">隨時傾偈、講笑話、報天氣，貼心陪伴無所不談</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    st.markdown('<div class="section-label">1️⃣ 語音指令（撳下面個咪講嘢）</div>', unsafe_allow_html=True)
-
-    audio_value = st.audio_input(
-        "👇 請撳下面個「咪高峰」開始講廣東話（講完再撳一下停止）："
-    )
+    st.markdown('<div class="section-label">1️⃣ 語音對話（撳下面個咪講廣東話）</div>', unsafe_allow_html=True)
+    audio_value = st.audio_input("👇 請撳下面個「咪高峰」開始同AI傾偈：")
 
     if audio_value is not None:
         current_bytes = audio_value.getvalue()
         if current_bytes != st.session_state.last_audio_bytes:
             st.session_state.last_audio_bytes = current_bytes
-            with st.spinner("⏳ 正在聽取你嘅廣東話指令..."):
+            with st.spinner("⏳ AI 正在聆聽並思考中..."):
                 ok, result_text = transcribe_cantonese_audio(current_bytes)
                 if ok:
                     handle_command(result_text)
@@ -689,22 +502,18 @@ def main() -> None:
                     st.session_state.tts_trigger_id += 1
 
     if st.session_state.status_message:
-        st.markdown(
-            f'<div class="alert-box" role="alert">{st.session_state.status_message}</div>',
-            unsafe_allow_html=True,
-        )
+        st.markdown(f'<div class="alert-box">{st.session_state.status_message}</div>', unsafe_allow_html=True)
 
-    st.markdown('<div class="section-label">2️⃣ 助手回答（大字顯示 + 自動朗讀）</div>', unsafe_allow_html=True)
-
+    st.markdown('<div class="section-label">2️⃣ AI 伴侶回答（大字顯示 + 自動朗讀）</div>', unsafe_allow_html=True)
     query_html = (
         f'<div class="query-echo">🗣️ 你問：「{st.session_state.user_query}」</div>'
         if st.session_state.user_query
-        else '<div class="query-echo">🗣️ 歡迎使用語音助手</div>'
+        else '<div class="query-echo">🗣️ 歡迎使用 AI 語音伴侶</div>'
     )
 
     st.markdown(
         f"""
-        <div class="response-card" role="status" aria-live="polite">
+        <div class="response-card">
             {query_html}
             <div class="response-text">{st.session_state.bot_response}</div>
         </div>
@@ -717,39 +526,34 @@ def main() -> None:
         st.session_state.tts_trigger_id,
     )
 
-    st.markdown('<div class="section-label">3️⃣ 常用一鍵指令（直接撳大掣）</div>', unsafe_allow_html=True)
-
+    st.markdown('<div class="section-label">3️⃣ 快捷話題推薦（直接撳大掣）</div>', unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🕒 而家幾點？", use_container_width=True):
-            handle_command("而家幾點？")
+        if st.button("😂 講個笑話嚟聽下", use_container_width=True):
+            handle_command("講個開心嘅笑話嚟聽下啦")
             st.rerun()
         if st.button("🌤️ 今日天氣點呀？", use_container_width=True):
-            handle_command("今日天氣點呀？")
+            handle_command("今日香港天氣點呀？")
             st.rerun()
-        if st.button("💊 提醒我食藥", use_container_width=True):
-            handle_command("今日有咩藥要食？")
+        if st.button("🍵 養生保健貼士", use_container_width=True):
+            handle_command("講個簡單實用嘅養生貼士畀我聽")
             st.rerun()
 
     with col2:
-        if st.button("📅 今日幾月幾號？", use_container_width=True):
-            handle_command("今日係幾月幾號星期幾？")
+        if st.button("🕒 而家幾點？", use_container_width=True):
+            handle_command("而家幾點呀？")
             st.rerun()
         if st.button("📞 搵屋企人電話", use_container_width=True):
             handle_command("我想打電話俾屋企人")
             st.rerun()
-        if st.button("👁️ 護眼健康貼士", use_container_width=True):
-            handle_command("你好，講個護眼貼士嚟聽下")
+        if st.button("🎵 推薦休閒活動", use_container_width=True):
+            handle_command("今日下午有咩老友記消閒活動推薦？")
             st.rerun()
 
-    st.markdown('<div class="section-label">4️⃣ 大字打字輸入（後備輸入框）</div>', unsafe_allow_html=True)
-
+    st.markdown('<div class="section-label">4️⃣ 文字輸入聊天（後備輸入框）</div>', unsafe_allow_html=True)
     with st.form(key="text_fallback_form", clear_on_submit=True):
-        fallback_input = st.text_input(
-            "如果唔想講嘢，可以喺呢度打字（例如：而家幾點、今日天氣）：",
-            placeholder="請喺度輸入廣東話問題...",
-        )
-        submit_btn = st.form_submit_button("✅ 發送問題並朗讀答案", use_container_width=True)
+        fallback_input = st.text_input("想講咩心事或者問乜嘢，喺度打字：", placeholder="例如：今日心情好靚，同我傾陣偈...")
+        submit_btn = st.form_submit_button("✅ 發送並讓 AI 回答", use_container_width=True)
         if submit_btn:
             handle_command(fallback_input)
             st.rerun()
