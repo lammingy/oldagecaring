@@ -1,3 +1,4 @@
-streamlit
-SpeechRecognition
-google-genai
+streamlit>=1.30.0
+SpeechRecognition>=3.10.0
+google-genai>=0.1.0
+ollama>=0.3.0
